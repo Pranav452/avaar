@@ -38,7 +38,7 @@ def sync_lips(
     video_path: Path,
     audio_path: Path,
     output_path: Path,
-    resize_factor: int = 1,
+    resize_factor: int = 2,
 ) -> Path:
     """
     Run Wav2Lip GAN to sync the speaker's lips in video_path with audio_path.
@@ -47,8 +47,8 @@ def sync_lips(
         video_path:     Source video containing the face.
         audio_path:     New synthesised speech WAV.
         output_path:    Destination for the lip-synced MP4.
-        resize_factor:  1 = original resolution. Use 2 if face detection fails
-                        (reduces resolution, improves detection robustness).
+        resize_factor:  2 = half resolution (default, ~4x faster on CPU, still good quality).
+                        Use 1 for full resolution if you have a GPU.
 
     Returns:
         output_path on success.
@@ -65,6 +65,7 @@ def sync_lips(
         "--pads", "0", "10", "0", "0",  # extra bottom padding for chin coverage
         "--resize_factor", str(resize_factor),
         "--nosmooth",                  # skip temporal smoothing for speed
+        "--wav2lip_batch_size", "64",  # process more frames per batch on CPU
     ]
 
     result = subprocess.run(
@@ -72,11 +73,14 @@ def sync_lips(
         cwd=str(WAV2LIP_DIR),   # mandatory — Wav2Lip uses relative imports
         capture_output=True,
         text=True,
-        timeout=600,            # 10-min hard limit
+        timeout=3600,           # 1-hour limit — CPU inference on long clips is slow
     )
 
     if result.returncode != 0:
         # Try fallback with resize_factor=2 if face wasn't detected
+        if resize_factor == 2 and "No face detected" in (result.stdout + result.stderr):
+            print("[lip_sync] Face not detected at resize_factor=2, retrying with 4…")
+            return sync_lips(video_path, audio_path, output_path, resize_factor=4)
         if resize_factor == 1 and "No face detected" in (result.stdout + result.stderr):
             print("[lip_sync] Face not detected at resize_factor=1, retrying with 2…")
             return sync_lips(video_path, audio_path, output_path, resize_factor=2)
